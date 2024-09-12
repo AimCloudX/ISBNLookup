@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISBN検索ツール</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8 flex flex-col min-h-screen">
+    <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6 mb-8">
+        <h1 class="text-2xl font-bold mb-4">ISBN検索ツール</h1>
+        <input type="text" id="isbn" placeholder="ISBNを入力" class="w-full px-3 py-2 border rounded-md mb-4">
+        <button onclick="searchBook()" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">検索</button>
+    </div>
+
+    <div id="result" class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6 mb-8"></div>
+
+    <div id="rawData" class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6 mt-auto">
+        <h2 class="text-xl font-bold mb-2">生のAPIレスポンス:</h2>
+        <pre id="rawDataContent" class="bg-gray-100 p-4 rounded-md overflow-auto max-h-96"></pre>
+    </div>
+
+    <script>
+        let currentBookData = null;
+
+        function formatISBN13(isbn) {
+            if (isbn.length !== 13) return isbn;
+            return `${isbn.slice(0, 3)}-${isbn.slice(3)}`;
+        }
+
+        async function searchBook() {
+            const isbn = document.getElementById('isbn').value.replace(/-/g, '');
+            const resultDiv = document.getElementById('result');
+            const rawDataContent = document.getElementById('rawDataContent');
+            resultDiv.innerHTML = '<p class="text-center">検索中...</p>';
+            rawDataContent.textContent = '';
+
+            try {
+                const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+                const data = await response.json();
+
+                rawDataContent.textContent = JSON.stringify(data, null, 2);
+
+                if (data.items && data.items.length > 0) {
+                    const book = data.items[0].volumeInfo;
+                    const industryIdentifiers = book.industryIdentifiers || [];
+                    const isbn13 = industryIdentifiers.find(id => id.type === 'ISBN_13')?.identifier || '不明';
+                    const formattedISBN13 = formatISBN13(isbn13);
+                    
+                    currentBookData = {
+                        title: book.title || '不明',
+                        publisher: book.publisher || '不明',
+                        author: book.authors ? book.authors[0] : '不明',
+                        isbn13: formattedISBN13,
+                        coverImage: book.imageLinks?.thumbnail || null
+                    };
+
+                    let coverImageHtml = currentBookData.coverImage
+                        ? `<img src="${currentBookData.coverImage}" alt="書籍の表紙" class="w-32 h-auto mb-4">`
+                        : '<p class="text-gray-500 mb-4">表紙画像なし</p>';
+
+                    resultDiv.innerHTML = `
+                        <h2 class="text-xl font-bold mb-2">検索結果:</h2>
+                        ${coverImageHtml}
+                        <p><strong>タイトル:</strong> ${currentBookData.title}</p>
+                        <p><strong>ISBN-13:</strong> ${currentBookData.isbn13}</p>
+                        <p><strong>著者:</strong> ${book.authors ? book.authors.join(', ') : '不明'}</p>
+                        <p><strong>出版社:</strong> ${currentBookData.publisher}</p>
+                        <p><strong>説明:</strong> ${book.description ? book.description.substring(0, 200) + '...' : '説明なし'}</p>
+                        <button onclick="copyBookInfo()" class="mt-4 bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                            書籍情報をコピー
+                        </button>
+                    `;
+                } else {
+                    resultDiv.innerHTML = '<p class="text-red-500">本が見つかりませんでした。</p>';
+                    currentBookData = null;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<p class="text-red-500">エラーが発生しました。もう一度お試しください。</p>';
+                rawDataContent.textContent = `Error: ${error.message}`;
+                console.error('Error:', error);
+                currentBookData = null;
+            }
+        }
+
+        function copyBookInfo() {
+            if (!currentBookData) {
+                alert('コピーする書籍情報がありません。');
+                return;
+            }
+
+            const copyText = `${currentBookData.title}\t${currentBookData.publisher}\t${currentBookData.author}\t\t1\t\t\t\t\t${currentBookData.isbn13}`;
+
+            navigator.clipboard.writeText(copyText).then(() => {
+                alert('書籍情報をクリップボードにコピーしました。');
+            }, (err) => {
+                console.error('コピーに失敗しました: ', err);
+                alert('コピーに失敗しました。');
+            });
+        }
+    </script>
+</body>
+</html>
