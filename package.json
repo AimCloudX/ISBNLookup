@@ -2,7 +2,7 @@
   "name": "isbn-tool",
   "private": true,
   "version": "0.0.0",
-  "homepage": "https://aimcloudx.github.io/ISBNLookup/",
+  "homepage": "https://aimcloudx.github.io/ISBNLookup",
   "type": "module",
   "scripts": {
     "dev": "vite",
