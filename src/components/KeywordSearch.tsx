@@ -82,10 +82,20 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
   function handleSetIsbn(isbn: string) {
     setIsbns(prevIsbns => {
       if (prevIsbns) {
-        return `${prevIsbns},${isbn}`;
+        return `${prevIsbns} ${isbn}`;
       } else {
         return isbn;
       }
+    });
+  }
+
+  function copyBookInfo(suggestion: Suggestion) {
+    const copyText = `${suggestion.title}\t${suggestion.authors}\t${suggestion.publisher}\t\t1\t\t\t\t${suggestion.isbn13}`;
+    navigator.clipboard.writeText(copyText).then(() => {
+      alert(`${suggestion.title} の情報をクリップボードにコピーしました。`);
+    }, (err) => {
+      console.error('コピーに失敗しました: ', err);
+      alert('コピーに失敗しました。');
     });
   }
 
@@ -155,7 +165,14 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
                           Amazonで見る
                         </a>
                       ) : (
-                        <span className="text-gray-500 text-lg">Amazonで見る（ISBN不明）</span>
+                                                <a
+                          href={"https://www.amazon.co.jp/s?k="+suggestion.title}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-orange-600 hover:underline text-lg"
+                        >
+                          Amazonで検索
+                        </a>
                       )}
                       <button
                         onClick={() => handleSetIsbn(suggestion.isbn13.replace(/-/g, ''))}
@@ -164,6 +181,12 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
                       >
                         ➕ ISBN検索にセット
                       </button>
+                      <button
+            onClick={() => copyBookInfo(suggestion)}
+            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-300"
+          >
+            📋 書籍情報をコピー
+          </button>
                     </div>
                   </div>
                 </div>

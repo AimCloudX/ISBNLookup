@@ -1,4 +1,3 @@
-// src/components/ISBNSearch.tsx
 import React, { useState, useEffect } from 'react';
 
 interface BookData {
@@ -20,7 +19,7 @@ interface ISBNSearchProps {
 function ISBNSearch({ isbns, setIsbns }: ISBNSearchProps) {
   const [bookDataList, setBookDataList] = useState<BookData[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+const [errorMessages, setErrorMessages] = useState<string[]>([]);
 
   useEffect(() => {
     if (isbns) {
@@ -41,15 +40,24 @@ function ISBNSearch({ isbns, setIsbns }: ISBNSearchProps) {
     return `https://www.amazon.co.jp/dp/${cleanIsbn}`;
   }
 
-  async function searchBooks(e?: React.FormEvent) {
-    if (e) e.preventDefault();
-    const isbnArray = isbns.split(',').map(isbn => isbn.trim().replace(/-/g, '')).filter(isbn => isbn !== '');
-    setLoading(true);
-    setError(null);
-    setBookDataList([]);
+async function searchBooks(e?: React.FormEvent) {
+  if (e) e.preventDefault();
+  
+  // ISBNの整形
+  const isbnArray = isbns.split(' ').map(isbn => isbn.trim().replace(/-/g, '')).filter(isbn => isbn !== '');
+  
+  setLoading(true);
+  setErrorMessages([]);
+  setBookDataList([]);
 
-    try {
-      const bookPromises = isbnArray.map(async (isbn) => {
+  try {
+    // 結果を格納する配列
+    const results: BookData[] = [];
+    const errorMessages:string[] = [];
+
+    // ISBNごとに処理
+    for (const isbn of isbnArray) {
+      try {
         const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
         const data = await response.json();
 
@@ -71,20 +79,30 @@ function ISBNSearch({ isbns, setIsbns }: ISBNSearchProps) {
             amazonLink: isbn10 !== '不明' ? generateAmazonLink(isbn10) : '#',
           };
 
-          return bookInfo;
+          // 成功した場合は結果に追加
+          results.push(bookInfo);
         } else {
-          throw new Error(`ISBN ${isbn} の本が見つかりませんでした。`);
+          // 本が見つからなかった場合はエラーメッセージを追加
+          errorMessages.push(`${isbn}`);
         }
-      });
-
-      const results = await Promise.all(bookPromises);
-      setBookDataList(results);
-    } catch (error: any) {
-      setError(error.message);
-    } finally {
-      setLoading(false);
+      } catch (error: any) {
+        // エラーが発生した場合はエラーメッセージを追加
+        errorMessages.push(`${isbn}`);
+      }
     }
+
+    // エラーがあればエラーメッセージを表示
+    if (errorMessages.length > 0) {
+      setErrorMessages(errorMessages);
+    }
+
+    // 取得した書籍情報を表示
+    setBookDataList(results);
+  } catch (error: any) {
+  } finally {
+    setLoading(false);
   }
+}
 
   function copyAllBookInfo() {
     if (bookDataList.length === 0) {
@@ -106,33 +124,34 @@ function ISBNSearch({ isbns, setIsbns }: ISBNSearchProps) {
 
   function removeIsbn(isbn13: string) {
     const cleanIsbn = isbn13.replace(/-/g, '');
-    const isbnArray = isbns.split(',').map(isbn => isbn.trim());
+    const isbnArray = isbns.split(' ').map(isbn => isbn.trim());
     const updatedIsbnArray = isbnArray.filter(isbn => isbn !== cleanIsbn);
-    setIsbns(updatedIsbnArray.join(','));
+    setIsbns(updatedIsbnArray.join(' '));
   }
 
+
   return (
-  <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden">
       <form onSubmit={searchBooks} className="max-w-3xl mx-auto bg-white rounded-lg shadow-lg p-6 flex-none">
         <div className="mb-6">
-          <label htmlFor="isbns" className="block text-gray-700 font-semibold text-lg mb-2">ISBNを入力（カンマ区切りで複数可）:</label>
+          <label htmlFor="isbns" className="block text-gray-700 font-semibold text-lg mb-2">ISBNを入力（スペース区切りで複数可）:</label>
           <input
             type="text"
             id="isbns"
             value={isbns}
             onChange={(e) => setIsbns(e.target.value)}
-            placeholder="例: 978-4-XX-XXXXXX-X,978-4-XX-XXXXXX-X"
+            placeholder="例: 978-4-XX-XXXXXX-X 978-4-XX-XXXXXX-X"
             className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 text-lg"
           />
         </div>
         <div className="flex justify-between items-center">
-          <button
-            type="submit"
-            className="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-300 text-lg flex items-center justify-center"
-          >
-            🔍 検索
-          </button>
-          <button
+        <button
+          type="submit"
+          className="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-300 text-lg flex items-center justify-center"
+        >
+          🔍 検索
+        </button>
+  <button
             onClick={copyAllBookInfo}
             type="button"
             className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-300 text-lg flex items-center"
@@ -140,15 +159,30 @@ function ISBNSearch({ isbns, setIsbns }: ISBNSearchProps) {
             📋 すべての書籍情報をコピー
           </button>
         </div>
-      </form>
+        </form>
 
       {loading && (
         <div className="flex justify-center mt-4 flex-none">
           <div className="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-16 w-16"></div>
         </div>
       )}
-
-      {error && <p className="text-red-500 text-center mt-4 text-lg flex-none">{error}</p>}
+            {errorMessages.length > 0 && (
+      <div>
+        <p className="text-red-500 text-center mt-4 text-lg flex-none">ISBN検索で見つかりませんでした。</p>
+        {errorMessages.map((error, index) => (
+                      <div key={index} className="max-w-3xl mx-auto bg-white rounded-lg shadow-lg p-6 mb-6 relative">
+                <button
+                  onClick={() => removeIsbn(error)}
+                  className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-2 rounded-full transition duration-300 text-sm"
+                  title="この書籍を削除"
+                >
+                  ✖
+                </button>
+                 <p className="text-red-500 text-center mt-4 text-lg flex-none" >{error}</p>
+              </div>
+        ))}
+        </div>
+            )}
 
        <div className="mt-4 flex-1 overflow-y-auto">
         {bookDataList.length > 0 && (
@@ -202,7 +236,7 @@ function ISBNSearch({ isbns, setIsbns }: ISBNSearchProps) {
           </div>
         )}
       </div>
-    </div>
+      </div>
   );
 }
 
