@@ -1,15 +1,6 @@
-import React, { useState, useEffect } from 'react';
-
-interface BookData {
-  title: string;
-  publisher: string;
-  author: string;
-  isbn13: string;
-  isbn10: string;
-  coverImage: string | null;
-  description: string;
-  amazonLink: string;
-}
+import React, { useState, useEffect, useRef } from 'react';
+import { formatBookRow } from '../utils/bookCopy';
+import { BookInfo, fetchBookByIsbn } from '../utils/booksApi';
 
 interface ISBNSearchProps {
   isbns: string;
@@ -17,108 +8,90 @@ interface ISBNSearchProps {
 }
 
 function ISBNSearch({ isbns, setIsbns }: ISBNSearchProps) {
-  const [bookDataList, setBookDataList] = useState<BookData[]>([]);
+  const [bookDataList, setBookDataList] = useState<BookInfo[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
-const [errorMessages, setErrorMessages] = useState<string[]>([]);
+  const [errorMessages, setErrorMessages] = useState<string[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [copiedAll, setCopiedAll] = useState<boolean>(false);
+  const copyTimerRef = useRef<number | undefined>(undefined);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
-    if (isbns) {
-      searchBooks();
-    } else {
+    if (!isbns.trim()) {
+      requestIdRef.current++;
       setBookDataList([]);
+      setErrorMessages([]);
+      setLoading(false);
+      return;
     }
+    // 入力中に1文字ごとへ問い合わせないよう、少し待ってから検索する
+    const timer = window.setTimeout(() => searchBooks(), 400);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isbns]);
 
-  function formatISBN13(isbn: string): string {
-    if (isbn.length !== 13) return isbn;
-    return `${isbn.slice(0, 3)}-${isbn.slice(3)}`;
-  }
+  async function searchBooks(e?: React.FormEvent) {
+    if (e) e.preventDefault();
 
-  function generateAmazonLink(isbn10: string): string {
-    const cleanIsbn = isbn10.replace(/-/g, '');
-    return `https://www.amazon.co.jp/dp/${cleanIsbn}`;
-  }
+    const isbnArray = [...new Set(
+      isbns.split(' ').map(isbn => isbn.trim().replace(/-/g, '')).filter(isbn => isbn !== '')
+    )];
+    if (isbnArray.length === 0) return;
 
-async function searchBooks(e?: React.FormEvent) {
-  if (e) e.preventDefault();
-  
-  // ISBNの整形
-  const isbnArray = isbns.split(' ').map(isbn => isbn.trim().replace(/-/g, '')).filter(isbn => isbn !== '');
-  
-  setLoading(true);
-  setErrorMessages([]);
-  setBookDataList([]);
+    // 古いリクエストの結果で新しい結果を上書きしないようにする
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
 
-  try {
-    // 結果を格納する配列
-    const results: BookData[] = [];
-    const errorMessages:string[] = [];
-
-    // ISBNごとに処理
-    for (const isbn of isbnArray) {
+    const settled = await Promise.all(isbnArray.map(async isbn => {
       try {
-        const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
-        const data = await response.json();
+        return { isbn, book: await fetchBookByIsbn(isbn) };
+      } catch (error) {
+        console.error(`ISBN ${isbn} の取得に失敗しました:`, error);
+        return { isbn, book: null };
+      }
+    }));
 
-        if (data.items && data.items.length > 0) {
-          const book = data.items[0].volumeInfo;
-          const industryIdentifiers = book.industryIdentifiers || [];
-          const isbn13 = industryIdentifiers.find((id: any) => id.type === 'ISBN_13')?.identifier || '不明';
-          const isbn10 = industryIdentifiers.find((id: any) => id.type === 'ISBN_10')?.identifier || '不明';
-          const formattedISBN13 = formatISBN13(isbn13);
+    if (requestId !== requestIdRef.current) return;
 
-          const bookInfo: BookData = {
-            title: book.title || '不明',
-            publisher: book.publisher || '不明',
-            author: book.authors ? book.authors.join(', ') : '不明',
-            isbn13: formattedISBN13,
-            isbn10: isbn10,
-            coverImage: book.imageLinks?.thumbnail || null,
-            description: book.description || '説明なし',
-            amazonLink: isbn10 !== '不明' ? generateAmazonLink(isbn10) : '#',
-          };
-
-          // 成功した場合は結果に追加
-          results.push(bookInfo);
-        } else {
-          // 本が見つからなかった場合はエラーメッセージを追加
-          errorMessages.push(`${isbn}`);
-        }
-      } catch (error: any) {
-        // エラーが発生した場合はエラーメッセージを追加
-        errorMessages.push(`${isbn}`);
+    const results: BookInfo[] = [];
+    const notFound: string[] = [];
+    for (const { isbn, book } of settled) {
+      if (book) {
+        results.push(book);
+      } else {
+        notFound.push(isbn);
       }
     }
 
-    // エラーがあればエラーメッセージを表示
-    if (errorMessages.length > 0) {
-      setErrorMessages(errorMessages);
-    }
-
-    // 取得した書籍情報を表示
+    setErrorMessages(notFound);
     setBookDataList(results);
-  } catch (error: any) {
-  } finally {
     setLoading(false);
   }
-}
 
   function copyAllBookInfo() {
-    if (bookDataList.length === 0) {
-      alert('コピーする書籍情報がありません。');
-      return;
-    }
+    if (bookDataList.length === 0) return;
 
     const copyText = bookDataList.map(bookData =>
-      `${bookData.title}\t${bookData.publisher}\t${bookData.author}\t\t1\t\t\t\t\t${bookData.isbn13}`
+      formatBookRow(bookData.title, bookData.authors, bookData.publisher, bookData.isbn13)
     ).join('\n');
 
     navigator.clipboard.writeText(copyText).then(() => {
-      alert('すべての書籍情報をクリップボードにコピーしました。');
+      setCopiedAll(true);
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopiedAll(false), 1500);
     }, (err) => {
       console.error('コピーに失敗しました: ', err);
-      alert('コピーに失敗しました。');
+    });
+  }
+
+  function copyBookInfo(bookData: BookInfo, index: number) {
+    const copyText = formatBookRow(bookData.title, bookData.authors, bookData.publisher, bookData.isbn13);
+    navigator.clipboard.writeText(copyText).then(() => {
+      setCopiedIndex(index);
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopiedIndex(null), 1500);
+    }, (err) => {
+      console.error('コピーに失敗しました: ', err);
     });
   }
 
@@ -128,7 +101,6 @@ async function searchBooks(e?: React.FormEvent) {
     const updatedIsbnArray = isbnArray.filter(isbn => isbn !== cleanIsbn);
     setIsbns(updatedIsbnArray.join(' '));
   }
-
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -145,50 +117,51 @@ async function searchBooks(e?: React.FormEvent) {
           />
         </div>
         <div className="flex justify-between items-center">
-        <button
-          type="submit"
-          className="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-300 text-lg flex items-center justify-center"
-        >
-          🔍 検索
-        </button>
-  <button
+          <button
+            type="submit"
+            className="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-300 text-lg flex items-center justify-center"
+          >
+            🔍 検索
+          </button>
+          <button
             onClick={copyAllBookInfo}
             type="button"
-            className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-300 text-lg flex items-center"
+            disabled={bookDataList.length === 0}
+            className={`${copiedAll ? 'bg-green-600' : 'bg-green-500 hover:bg-green-600'} text-white font-semibold py-2 px-4 rounded-lg transition duration-300 text-lg flex items-center ${bookDataList.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            📋 すべての書籍情報をコピー
+            {copiedAll ? '✓ コピーしました' : '📋 すべての書籍情報をコピー'}
           </button>
         </div>
-        </form>
+      </form>
 
       {loading && (
         <div className="flex justify-center mt-4 flex-none">
           <div className="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-16 w-16"></div>
         </div>
       )}
-            {errorMessages.length > 0 && (
-      <div>
-        <p className="text-red-500 text-center mt-4 text-lg flex-none">ISBN検索で見つかりませんでした。</p>
-        {errorMessages.map((error, index) => (
-                      <div key={index} className="max-w-3xl mx-auto bg-white rounded-lg shadow-lg p-6 mb-6 relative">
-                <button
-                  onClick={() => removeIsbn(error)}
-                  className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-2 rounded-full transition duration-300 text-sm"
-                  title="この書籍を削除"
-                >
-                  ✖
-                </button>
-                 <p className="text-red-500 text-center mt-4 text-lg flex-none" >{error}</p>
-              </div>
-        ))}
+      {errorMessages.length > 0 && (
+        <div>
+          <p className="text-red-500 text-center mt-4 text-lg flex-none">ISBN検索で見つかりませんでした。</p>
+          {errorMessages.map((error, index) => (
+            <div key={index} className="max-w-3xl mx-auto bg-white rounded-lg shadow-lg p-6 mb-6 relative">
+              <button
+                onClick={() => removeIsbn(error)}
+                className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-2 rounded-full transition duration-300 text-sm"
+                title="この書籍を削除"
+              >
+                ✖
+              </button>
+              <p className="text-red-500 text-center mt-4 text-lg flex-none">{error}</p>
+            </div>
+          ))}
         </div>
-            )}
+      )}
 
-       <div className="mt-4 flex-1 overflow-y-auto">
+      <div className="mt-4 flex-1 overflow-y-auto">
         {bookDataList.length > 0 && (
           <div className="mt-4">
             {bookDataList.map((bookData, index) => (
-            <div key={index} className="max-w-3xl mx-auto bg-white rounded-lg shadow-lg p-6 mb-6 relative">
+              <div key={index} className="max-w-3xl mx-auto bg-white rounded-lg shadow-lg p-6 mb-6 relative">
                 <button
                   onClick={() => removeIsbn(bookData.isbn13)}
                   className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-2 rounded-full transition duration-300 text-sm"
@@ -203,6 +176,7 @@ async function searchBooks(e?: React.FormEvent) {
                         src={bookData.coverImage}
                         alt="書籍の表紙"
                         className="w-full h-full object-contain rounded-lg shadow"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       />
                     ) : (
                       <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
@@ -212,22 +186,30 @@ async function searchBooks(e?: React.FormEvent) {
                   </div>
                   <div className="flex-1">
                     <h2 className="text-2xl font-bold text-orange-700 mb-2">{bookData.title}</h2>
-                    <p className="text-gray-700 mb-1 text-lg"><strong>著者:</strong> {bookData.author}</p>
+                    <p className="text-gray-700 mb-1 text-lg"><strong>著者:</strong> {bookData.authors}</p>
                     <p className="text-gray-700 mb-1 text-lg"><strong>出版社:</strong> {bookData.publisher}</p>
                     <p className="text-gray-700 mb-1 text-lg"><strong>ISBN-13:</strong> {bookData.isbn13}</p>
                     <p className="text-gray-700 mb-1 text-lg"><strong>ISBN-10:</strong> {bookData.isbn10}</p>
-                    {bookData.amazonLink !== '#' ? (
-                      <a
-                        href={bookData.amazonLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-orange-600 hover:underline text-lg"
+                    <div className="mt-4 flex items-center space-x-4">
+                      {bookData.amazonLink !== '#' ? (
+                        <a
+                          href={bookData.amazonLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-orange-600 hover:underline text-lg"
+                        >
+                          Amazonで見る
+                        </a>
+                      ) : (
+                        <span className="text-gray-500 text-lg">Amazonで見る（ISBN不明）</span>
+                      )}
+                      <button
+                        onClick={() => copyBookInfo(bookData, index)}
+                        className={`${copiedIndex === index ? 'bg-green-500 hover:bg-green-600' : 'bg-blue-500 hover:bg-blue-600'} text-white font-semibold py-2 px-4 rounded-lg transition duration-300`}
                       >
-                        Amazonで見る
-                      </a>
-                    ) : (
-                      <span className="text-gray-500 text-lg">Amazonで見る（ISBN不明）</span>
-                    )}
+                        {copiedIndex === index ? '✓ コピーしました' : '📋 書籍情報をコピー'}
+                      </button>
+                    </div>
                     <p className="text-gray-700 mt-4 text-lg"><strong>説明:</strong> {bookData.description.substring(0, 200)}...</p>
                   </div>
                 </div>
@@ -236,7 +218,7 @@ async function searchBooks(e?: React.FormEvent) {
           </div>
         )}
       </div>
-      </div>
+    </div>
   );
 }
 

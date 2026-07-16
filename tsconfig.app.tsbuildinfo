@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/ISBNSearch.tsx","./src/components/KeywordSearch.tsx"],"version":"5.6.2"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/isbnsearch.tsx","./src/components/keywordsearch.tsx","./src/utils/bookcopy.test.ts","./src/utils/bookcopy.ts","./src/utils/booksapi.test.ts","./src/utils/booksapi.ts"],"version":"5.6.2"}

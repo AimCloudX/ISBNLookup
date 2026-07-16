@@ -1,15 +1,7 @@
 // src/components/KeywordSearch.tsx
-import React, { useState } from 'react';
-
-interface Suggestion {
-  title: string;
-  authors: string;
-  publisher: string;
-  isbn13: string;
-  isbn10: string;
-  coverImage: string | null;
-  amazonLink: string;
-}
+import React, { useRef, useState } from 'react';
+import { formatBookRow } from '../utils/bookCopy';
+import { BookInfo, BookSource, searchBooksByKeyword } from '../utils/booksApi';
 
 interface KeywordSearchProps {
   setIsbns: React.Dispatch<React.SetStateAction<string>>;
@@ -17,19 +9,13 @@ interface KeywordSearchProps {
 
 function KeywordSearch({ setIsbns }: KeywordSearchProps) {
   const [keyword, setKeyword] = useState<string>('');
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<BookInfo[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-
-  function formatISBN13(isbn: string): string {
-    if (isbn.length !== 13) return isbn;
-    return `${isbn.slice(0, 3)}-${isbn.slice(3)}`;
-  }
-
-  function generateAmazonLink(isbn10: string): string {
-    const cleanIsbn = isbn10.replace(/-/g, '');
-    return `https://www.amazon.co.jp/dp/${cleanIsbn}`;
-  }
+  const [source, setSource] = useState<BookSource>('google');
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const copyTimerRef = useRef<number | undefined>(undefined);
+  const requestIdRef = useRef(0);
 
   async function searchKeyword(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -38,44 +24,26 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
       return;
     }
 
+    // 古いリクエストの結果で新しい結果を上書きしないようにする
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
-    setSuggestions([]);
 
     try {
-      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(keyword)}`);
-      const data = await response.json();
-
-      if (data.items && data.items.length > 0) {
-        const results = data.items.map((item: any) => {
-          const book = item.volumeInfo;
-          const industryIdentifiers = book.industryIdentifiers || [];
-          const isbn13 = industryIdentifiers.find((id: any) => id.type === 'ISBN_13')?.identifier || '不明';
-          const isbn10 = industryIdentifiers.find((id: any) => id.type === 'ISBN_10')?.identifier || '不明';
-          const formattedISBN13 = formatISBN13(isbn13);
-
-          const suggestion: Suggestion = {
-            title: book.title || '不明',
-            authors: book.authors ? book.authors.join(', ') : '不明',
-            publisher: book.publisher || '不明',
-            isbn13: formattedISBN13,
-            isbn10: isbn10,
-            coverImage: book.imageLinks?.thumbnail || null,
-            amazonLink: isbn10 !== '不明' ? generateAmazonLink(isbn10) : '#',
-          };
-
-          return suggestion;
-        });
-
-        setSuggestions(results);
-      } else {
+      const result = await searchBooksByKeyword(keyword.trim());
+      if (requestId !== requestIdRef.current) return;
+      setSuggestions(result.books);
+      setSource(result.source);
+      if (result.books.length === 0) {
         setError('本が見つかりませんでした。');
       }
-    } catch (error: any) {
-      setError('エラーが発生しました。もう一度お試しください。');
+    } catch (error) {
+      if (requestId !== requestIdRef.current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setError(`検索に失敗しました。しばらくしてからもう一度お試しください。(${message})`);
       console.error('Error:', error);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }
 
@@ -89,13 +57,15 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
     });
   }
 
-  function copyBookInfo(suggestion: Suggestion) {
-    const copyText = `${suggestion.title}\t${suggestion.authors}\t${suggestion.publisher}\t\t1\t\t\t\t${suggestion.isbn13}`;
+  function copyBookInfo(suggestion: BookInfo, index: number) {
+    const copyText = formatBookRow(suggestion.title, suggestion.authors, suggestion.publisher, suggestion.isbn13);
     navigator.clipboard.writeText(copyText).then(() => {
-      alert(`${suggestion.title} の情報をクリップボードにコピーしました。`);
+      setCopiedIndex(index);
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopiedIndex(null), 1500);
     }, (err) => {
       console.error('コピーに失敗しました: ', err);
-      alert('コピーに失敗しました。');
+      setError('クリップボードへのコピーに失敗しました。');
     });
   }
 
@@ -129,6 +99,12 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
 
       {error && <p className="text-red-500 text-center mt-4 text-lg flex-none">{error}</p>}
 
+      {!loading && source === 'ndl' && suggestions.length > 0 && (
+        <p className="text-amber-700 bg-amber-100 rounded-lg max-w-3xl mx-auto px-4 py-2 text-center mt-4 flex-none">
+          ⚠ Google Books APIが利用できないため、国立国会図書館サーチの結果（出版年の新しい順）を表示しています。
+        </p>
+      )}
+
       <div className="mt-4 flex-1 overflow-y-auto">
         {suggestions.length > 0 && (
           <div className="mt-4">
@@ -141,6 +117,7 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
                         src={suggestion.coverImage}
                         alt="書籍の表紙"
                         className="w-full h-full object-contain rounded-lg shadow"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       />
                     ) : (
                       <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded-lg">
@@ -165,8 +142,8 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
                           Amazonで見る
                         </a>
                       ) : (
-                                                <a
-                          href={"https://www.amazon.co.jp/s?k="+suggestion.title}
+                        <a
+                          href={"https://www.amazon.co.jp/s?k=" + suggestion.title}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-orange-600 hover:underline text-lg"
@@ -182,11 +159,11 @@ function KeywordSearch({ setIsbns }: KeywordSearchProps) {
                         ➕ ISBN検索にセット
                       </button>
                       <button
-            onClick={() => copyBookInfo(suggestion)}
-            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-300"
-          >
-            📋 書籍情報をコピー
-          </button>
+                        onClick={() => copyBookInfo(suggestion, index)}
+                        className={`${copiedIndex === index ? 'bg-green-500 hover:bg-green-600' : 'bg-blue-500 hover:bg-blue-600'} text-white font-semibold py-2 px-4 rounded-lg transition duration-300`}
+                      >
+                        {copiedIndex === index ? '✓ コピーしました' : '📋 書籍情報をコピー'}
+                      </button>
                     </div>
                   </div>
                 </div>
